@@ -1,0 +1,150 @@
+---
+title: "Predicting Fuel Economy with Multivariable Regression"
+author: "Robby Dosanjh"
+output:
+  github_document:
+    fig_width: 7
+    fig_height: 4.5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.path = "figures/")
+```
+
+## Overview
+
+This analysis models combined fuel economy (MPG) for passenger vehicles using engine size and drivetrain. Two multivariable regression models are built and compared using hypothesis tests, *R*², and residual error.
+
+**Data:** EPA Fuel Economy dataset, all model years 1984–2025, downloaded from [fueleconomy.gov](https://fueleconomy.gov/feg/download.shtml).
+
+## Setup and data cleaning
+
+Plug-in hybrids running in blended mode and vehicles with zero tailpipe CO₂ (fully electric) are removed, since their fuel economy is not driven by a combustion engine.
+
+```{r load-data}
+library(dplyr)
+library(ggplot2)
+library(mosaic)
+
+vehicles <- read.csv("../data/vehicles.csv")
+
+vehicles <- vehicles |>
+  filter(phevBlended == "false",
+         co2TailpipeGpm > 0)
+```
+
+## Recoding drivetrain
+
+The original `drive` variable has several overlapping categories, which are combined into three levels.
+
+```{r drivetrain}
+vehicles <- vehicles |>
+  mutate(drivetrain = case_when(
+    drive %in% c("2-Wheel Drive",
+                 "Front-Wheel Drive")          ~ "Front-Wheel Drive",
+    drive %in% c("4-Wheel Drive",
+                 "4-Wheel or All-Wheel Drive",
+                 "Part-time 4-Wheel Drive",
+                 "All-Wheel Drive")            ~ "All-Wheel Drive",
+    TRUE                                       ~ "Rear-Wheel Drive"
+  ),
+  drivetrain = factor(drivetrain))
+
+tally(~ drivetrain, data = vehicles)
+
+# Crosstab to confirm each original category was assigned correctly
+tally(drive ~ drivetrain, data = vehicles)
+```
+
+## 1. Correlations
+
+```{r correlations}
+cor(comb08 ~ displ, data = vehicles, use = "complete.obs")
+cor(comb08 ~ cylinders, data = vehicles, use = "complete.obs")
+```
+
+Combined fuel economy has a strong negative correlation with engine displacement (*r* = −0.72) and a moderately strong negative correlation with the number of cylinders (*r* = −0.68), meaning vehicles with larger engines and more cylinders tend to get fewer miles per gallon. Displacement is slightly more strongly related to fuel economy than cylinder count.
+
+## 2. Model 1: displacement and cylinders
+
+```{r scatterplots}
+vehicles |>
+  ggplot(aes(x = displ, y = comb08)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(title = "Combined Fuel Economy vs. Engine Displacement",
+       x = "Engine Displacement (liters)",
+       y = "Combined Fuel Economy (MPG)")
+
+vehicles |>
+  ggplot(aes(x = cylinders, y = comb08)) +
+  geom_jitter(alpha = 0.1, width = 0.2, height = 0) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(title = "Combined Fuel Economy vs. Number of Cylinders",
+       x = "Number of Cylinders",
+       y = "Combined Fuel Economy (MPG)")
+```
+
+```{r model-1}
+comb08.lm1 <- lm(comb08 ~ displ + cylinders,
+                 data = vehicles,
+                 na.action = na.exclude)
+
+summary(comb08.lm1)
+```
+
+Model 1 predicts combined fuel economy as 31.00 − 2.40(displ) − 0.45(cylinders). Each extra liter of engine displacement lowers fuel economy by about 2.4 MPG, and each extra cylinder lowers it by about 0.45 MPG. The *R*² of 0.529 shows that these two variables explain about 53% of the variation in fuel economy, and predictions are usually off by about 3.8 MPG. Both variables and the overall *F*-test have *p*-values far below .05, so we reject the null hypothesis and conclude that displacement and cylinders are both significant predictors of fuel economy.
+
+## 3. Model 2: displacement and drivetrain
+
+```{r boxplot}
+vehicles |>
+  ggplot(aes(x = drivetrain, y = comb08, fill = drivetrain)) +
+  geom_boxplot() +
+  labs(title = "Combined Fuel Economy by Drivetrain",
+       x = "Drivetrain",
+       y = "Combined Fuel Economy (MPG)") +
+  theme(legend.position = "none")
+
+favstats(comb08 ~ drivetrain, data = vehicles)
+```
+
+```{r model-2}
+comb08.lm2 <- lm(comb08 ~ displ + drivetrain,
+                 data = vehicles,
+                 na.action = na.exclude)
+
+summary(comb08.lm2)
+```
+
+Model 2 predicts combined fuel economy as 28.13 − 2.56(displ) + 2.33(Front-Wheel Drive) + 0.14(Rear-Wheel Drive), compared with all-wheel drive. Each extra liter of displacement lowers fuel economy by about 2.56 MPG, and with the same engine size, front-wheel drive vehicles get about 2.33 MPG more than all-wheel drive vehicles, while rear-wheel drive vehicles get only about 0.14 MPG more. The *R*² of 0.555 means this model explains about 55.5% of the variation in fuel economy, with predictions usually off by about 3.65 MPG. The *F*-test and every coefficient have *p*-values below .05, with the largest being .0007 for rear-wheel drive, so we reject the null hypothesis and conclude that all of the variables are significant.
+
+## 4. Residual analysis
+
+```{r residuals}
+vehicles <- vehicles |>
+  mutate(lm1_fitted = predict(comb08.lm1),
+         lm1_resid  = resid(comb08.lm1),
+         lm2_fitted = predict(comb08.lm2),
+         lm2_resid  = resid(comb08.lm2))
+
+# Sum of absolute deviations (SAD) and sum of squared deviations (SSD)
+q2SAD <- sum(abs(vehicles$lm1_resid), na.rm = TRUE)
+q2SSD <- sum(vehicles$lm1_resid^2, na.rm = TRUE)
+
+q3SAD <- sum(abs(vehicles$lm2_resid), na.rm = TRUE)
+q3SSD <- sum(vehicles$lm2_resid^2, na.rm = TRUE)
+```
+
+| Model | SAD | SSD |
+|---|---|---|
+| Model 1: displacement + cylinders | `r format(round(q2SAD, 2), big.mark = ",", nsmall = 2)` | `r format(round(q2SSD, 2), big.mark = ",", nsmall = 2)` |
+| Model 2: displacement + drivetrain | `r format(round(q3SAD, 2), big.mark = ",", nsmall = 2)` | `r format(round(q3SSD, 2), big.mark = ",", nsmall = 2)` |
+
+## 5. Choosing the better model
+
+Both models are statistically significant overall, and every variable in each one has a *p*-value well below .05, so the hypothesis tests alone don't show which model is better. Comparing the residuals, Model 2 had a smaller SAD (121,884.86 vs. 124,785.37 for Model 1) and a smaller SSD (626,526.88 vs. 662,846.81), so its predictions were closer to the actual values overall. Model 2 also had a higher *R*² (0.555 vs. 0.529) and a lower residual standard error (3.65 vs. 3.76 MPG). Taken together, Model 2 is the better model.
+
+## 6. Conclusion
+
+Engine size was the most important variable in predicting combined fuel economy. The best model was Model 2, which predicts fuel economy as 28.13 − 2.56(displ) + 2.33(Front-Wheel Drive) + 0.14(Rear-Wheel Drive). All of the coefficients were significant, and rear-wheel and all-wheel drive vehicles perform about the same once engine size is taken into account. These results could help car buyers who want better gas mileage, since a smaller engine and front-wheel drive make the biggest difference, and manufacturers could use them to estimate how engine and drivetrain choices affect fuel economy targets. Model 2 still leaves about 45% of the variation unexplained and underestimates hybrids the most, so adding variables like hybrid technology, vehicle class, or model year would likely make the predictions more accurate.
