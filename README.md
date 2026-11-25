@@ -48,4 +48,4 @@ R · dplyr · ggplot2 · mosaic · knitr · R Markdown
 
 ## Contact
 
-Robby Dosanjh · [LinkedIn](https://linkedin.com/in/your-username) · [your.email@example.com](mailto:your.email@example.com)
+Robby Dosanjh
